@@ -95,6 +95,7 @@ if __name__ == '__main__':
         os.makedirs(args.save_dir)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f'Using device: {device}')
 
     # Load model
     tracknet_ckpt = torch.load(args.tracknet_file, map_location=device)
