@@ -2,6 +2,7 @@ import os
 import cv2
 import math
 import parse
+import time
 import numpy as np
 import pandas as pd
 from PIL import Image
@@ -764,6 +765,7 @@ class Video_IterableDataset(IterableDataset):
                 video_range (Tuple[int]): Range of start second and end second of the video for generating median image.
         """
         print('Generate median image...')
+        start_time = time.time()
         if video_range is None:
             start_frame, end_frame = 0, self.video_len
         else:
@@ -805,7 +807,7 @@ class Video_IterableDataset(IterableDataset):
             median = Image.fromarray(median.astype('uint8'))
             median = np.array(median.resize(size=(self.WIDTH, self.HEIGHT)))
             median = np.moveaxis(median, -1, 0)
-        print('Median image generated.')
+        print(f'Median image generated. Time taken: {time.time() - start_time:.2f}s')
         return median
 
     def __process_image__(self, img):
