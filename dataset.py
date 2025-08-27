@@ -721,11 +721,15 @@ class Video_IterableDataset(IterableDataset):
         start_f_id, end_f_id = 0, 0
         frame_list = []
         i = 0
+        last_reported_percent = 0.
         while success:
             # Sample frames
             while len(frame_list) < self.seq_len:
                 success, frame = self.cap.read()
-                print(f'read frame {i}')
+                percent = i / self.video_len * 100
+                if percent - last_reported_percent > 1.:
+                    print(f'\rprocessed percent: {percent:.2f}%', end='')
+                    last_reported_percent = percent
                 i += 1
                 if not success:
                     break
@@ -771,11 +775,16 @@ class Video_IterableDataset(IterableDataset):
             sample_step = video_seg_len // max_sample_num
         else:
             sample_step = 1
-        
+        print(f'Sample every {sample_step} frames from frame {start_frame} to frame {end_frame}.')
         frame_list = []
+        last_reported_percent = 0.
         for i in range(start_frame, end_frame, sample_step):
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, i)
             success, frame = self.cap.read()
+            percent = i / end_frame * 100
+            if percent - last_reported_percent > 1.:
+                print(f'\rprocessed percent: {percent:.2f}%', end='')
+                last_reported_percent = percent
             if not success:
                 break
             frame_list.append(frame)
@@ -784,7 +793,7 @@ class Video_IterableDataset(IterableDataset):
             median = Image.fromarray(median.astype('uint8'))
             median = np.array(median.resize(size=(self.WIDTH, self.HEIGHT)))
             median = np.moveaxis(median, -1, 0)
-        print('Median image generated.')
+        print('\nMedian image generated.')
         return median
 
     def __process_image__(self, img):
