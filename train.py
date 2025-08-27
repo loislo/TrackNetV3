@@ -52,7 +52,7 @@ def get_random_mask(mask_size, mask_ratio):
     """
 
     mask = np.random.binomial(1, mask_ratio, size=mask_size)
-    mask = torch.from_numpy(mask).float().cuda().unsqueeze(-1)
+    mask = torch.from_numpy(mask).float().to(device).unsqueeze(-1)
 
     return mask
 
@@ -83,7 +83,7 @@ def train_tracknet(model, optimizer, data_loader, param_dict):
     
     for step, (_, x, y, c, _) in enumerate(data_prob):
         optimizer.zero_grad()
-        x, y = x.float().cuda(), y.float().cuda()
+        x, y = x.float().to(device), y.float().to(device)
 
         # Sample mixup
         if param_dict['alpha'] > 0:
@@ -146,10 +146,10 @@ def train_inpaintnet(model, optimizer, data_loader, param_dict):
 
     for step, (_, coor_pred, coor_gt, _, vis_gt, _) in enumerate(data_prob):
         optimizer.zero_grad()
-        coor_pred, coor_gt, vis_gt = coor_pred.float().cuda(), coor_gt.float().cuda(), vis_gt.float().cuda()
+        coor_pred, coor_gt, vis_gt = coor_pred.float().to(device), coor_gt.float().to(device), vis_gt.float().to(device)
 
         # Sample random mask as inpainting mask
-        mask = get_random_mask(mask_size=coor_gt.shape[:2], mask_ratio=param_dict['mask_ratio']).cuda() # (N, L, 1)
+        mask = get_random_mask(mask_size=coor_gt.shape[:2], mask_ratio=param_dict['mask_ratio']).to(device) # (N, L, 1)
         inpaint_mask = torch.logical_and(vis_gt, mask).int() # visible and masked area
         
         coor_pred = coor_pred * (1 - inpaint_mask) # masked area is set to 0
@@ -204,6 +204,14 @@ if __name__ == '__main__':
     torch.cuda.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = True
 
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+    elif torch.backends.mps.is_available():
+        device = torch.device('mps')
+    else:
+        device = torch.device('cpu')
+    print(f'Using device: {device}')
+
     if not os.path.exists(args.save_dir):
         os.makedirs(args.save_dir)
     
@@ -233,7 +241,7 @@ if __name__ == '__main__':
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=num_workers, drop_last=False, pin_memory=True)
 
     print(f'Create {args.model_name}...')
-    model = get_model(args.model_name, args.seq_len, args.bg_mode).cuda() if args.model_name == 'TrackNet' else get_model(args.model_name).cuda()
+    model = get_model(args.model_name, args.seq_len, args.bg_mode).to(device) if args.model_name == 'TrackNet' else get_model(args.model_name).to(device)
     train_fn = train_tracknet if args.model_name == 'TrackNet' else train_inpaintnet
     eval_fn = eval_tracknet if args.model_name == 'TrackNet' else eval_inpaintnet
 
