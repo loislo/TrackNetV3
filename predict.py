@@ -1,5 +1,6 @@
 import os
 import argparse
+import time
 import numpy as np
 
 import torch
@@ -172,6 +173,7 @@ if __name__ == '__main__':
         frame_i = torch.arange(seq_len-1, -1, -1) # [7, 6, 5, 4, 3, 2, 1, 0]
         y_pred_buffer = torch.zeros((buffer_size, seq_len, HEIGHT, WIDTH), dtype=torch.float32)
         weight = get_ensemble_weight(seq_len, args.eval_mode)
+        start_time = time.time()
         for step, (i, x) in enumerate(data_loader):
             x = x.float().to(device)
             b_size, seq_len = i.shape[0], i.shape[1]
@@ -212,7 +214,7 @@ if __name__ == '__main__':
 
             # Update buffer, keep last predictions for ensemble in next iteration
             y_pred_buffer = y_pred_buffer[-buffer_size:]
-
+        print(f'TrackNet prediction done. Time taken: {time.time() - start_time:.2f}s')
     #assert video_len == len(tracknet_pred_dict['Frame']), 'Prediction length mismatch'
     # Test on TrackNetV3 (TrackNet + InpaintNet)
     if inpaintnet is not None:
