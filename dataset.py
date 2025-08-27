@@ -727,8 +727,8 @@ class Video_IterableDataset(IterableDataset):
             while len(frame_list) < self.seq_len:
                 success, frame = self.cap.read()
                 percent = i / self.video_len * 100
-                if percent - last_reported_percent > 1.:
-                    print(f'read file: {percent:.2f}%', end='\r')
+                if percent - last_reported_percent > 0.1:
+                    print(f'read file: {percent:.1f}%', end='\r')
                     last_reported_percent = percent
                 i += 1
                 if not success:
@@ -781,20 +781,22 @@ class Video_IterableDataset(IterableDataset):
         for i in range(start_frame, end_frame, sample_step):
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, i)
             success, frame = self.cap.read()
+            frame = frame[..., ::-1] # BGR to RGB
             percent = i / end_frame * 100
-            if percent - last_reported_percent > 1.:
-                print(f'\rprocessed percent: {percent:.2f}%', end='')
+            if percent - last_reported_percent > 0.1:
+                print(f'processed percent: {percent:.1f}%', end='\r')
                 last_reported_percent = percent
             if not success:
                 break
             frame_list.append(frame)
-        print(f'\rprocessed percent: 100.00%')
-        median = np.median(frame_list, 0)[..., ::-1] # BGR to RGB
+        print(f'processed percent: 100.00%')
+        print(f'Total {len(frame_list)} frames sampled.')
+        median = np.median(frame_list, 0)
         if self.bg_mode == 'concat':
             median = Image.fromarray(median.astype('uint8'))
             median = np.array(median.resize(size=(self.WIDTH, self.HEIGHT)))
             median = np.moveaxis(median, -1, 0)
-        print('\nMedian image generated.')
+        print('Median image generated.')
         return median
 
     def __process_image__(self, img):
