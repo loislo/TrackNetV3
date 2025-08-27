@@ -28,7 +28,7 @@ def predict(indices, y_pred=None, c_pred=None, img_scaler=(1, 1)):
     pred_dict = {'Frame':[], 'X':[], 'Y':[], 'Visibility':[]}
 
     batch_size, seq_len = indices.shape[0], indices.shape[1]
-    indices = indices.detach().cpu().numpy()if torch.is_tensor(indices) else indices.numpy()
+    indices = indices.detach().cpu().numpy() if torch.is_tensor(indices) else indices.numpy()
     
     # Transform input for heatmap prediction
     if y_pred is not None:
