@@ -10,7 +10,8 @@ from test import predict_location, get_ensemble_weight, generate_inpaint_mask
 from dataset import Shuttlecock_Trajectory_Dataset, Video_IterableDataset
 from utils.general import *
 
-
+last_predict_time = 0
+total_predict_time = 0
 def predict(indices, y_pred=None, c_pred=None, img_scaler=(1, 1)):
     """ Predict coordinates from heatmap or inpainted coordinates. 
 
@@ -25,6 +26,10 @@ def predict(indices, y_pred=None, c_pred=None, img_scaler=(1, 1)):
                 Format: {'Frame':[], 'X':[], 'Y':[], 'Visibility':[]}
     """
     start_time = time.time()
+    global last_predict_time
+    global total_predict_time
+    if last_predict_time:
+        print(f'preprocessing time: {start_time - last_predict_time:.2f}s')
     pred_dict = {'Frame':[], 'X':[], 'Y':[], 'Visibility':[]}
 
     batch_size, seq_len = indices.shape[0], indices.shape[1]
@@ -66,6 +71,9 @@ def predict(indices, y_pred=None, c_pred=None, img_scaler=(1, 1)):
             else:
                 break
     print(f'Predict time taken: {time.time() - start_time:.2f}s')
+    
+    total_predict_time += time.time() - start_time
+    last_predict_time = time.time()
     return pred_dict    
 
 if __name__ == '__main__':
@@ -123,6 +131,7 @@ if __name__ == '__main__':
     tracknet_pred_dict = {'Frame':[], 'X':[], 'Y':[], 'Visibility':[], 'Inpaint_Mask':[],
                         'Img_scaler': (w_scaler, h_scaler), 'Img_shape': (w, h)}
 
+    start_time = time.time()
     # Test on TrackNet
     tracknet.eval()
     seq_len = tracknet_seq_len
@@ -173,7 +182,6 @@ if __name__ == '__main__':
         frame_i = torch.arange(seq_len-1, -1, -1) # [7, 6, 5, 4, 3, 2, 1, 0]
         y_pred_buffer = torch.zeros((buffer_size, seq_len, HEIGHT, WIDTH), dtype=torch.float32)
         weight = get_ensemble_weight(seq_len, args.eval_mode)
-        start_time = time.time()
         for step, (i, x) in enumerate(data_loader):
             x = x.float().to(device)
             b_size, seq_len = i.shape[0], i.shape[1]
@@ -214,7 +222,9 @@ if __name__ == '__main__':
 
             # Update buffer, keep last predictions for ensemble in next iteration
             y_pred_buffer = y_pred_buffer[-buffer_size:]
-        print(f'TrackNet prediction done. Time taken: {time.time() - start_time:.2f}s')
+    print(f'TrackNet prediction done. Time taken: {time.time() - start_time:.2f}s')
+    print(f'Total predict time: {total_predict_time:0.2f}s')
+
     #assert video_len == len(tracknet_pred_dict['Frame']), 'Prediction length mismatch'
     # Test on TrackNetV3 (TrackNet + InpaintNet)
     if inpaintnet is not None:

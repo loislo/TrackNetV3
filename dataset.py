@@ -808,6 +808,8 @@ class Video_IterableDataset(IterableDataset):
             median = np.array(median.resize(size=(self.WIDTH, self.HEIGHT)))
             median = np.moveaxis(median, -1, 0)
         print(f'Median image generated. Time taken: {time.time() - start_time:.2f}s')
+        median = median.astype('float32')
+        median /= 255.
         return median
 
     def __process_image__(self, img):
@@ -816,18 +818,19 @@ class Video_IterableDataset(IterableDataset):
             median_img = self.median
 
         if self.bg_mode == 'subtract':
-            img = Image.fromarray(np.sum(np.absolute(img - median_img), 2).astype('uint8'))
+            img = Image.fromarray(np.sum(np.absolute(img - median_img), 2))
             img = np.array(img.resize(size=(self.WIDTH, self.HEIGHT)))
             img = img.reshape(1, self.HEIGHT, self.WIDTH)
         elif self.bg_mode == 'subtract_concat':
-            diff_img = Image.fromarray(np.sum(np.absolute(img - median_img), 2).astype('uint8'))
+            diff_img = Image.fromarray(np.sum(np.absolute(img - median_img), 2))
             diff_img = np.array(diff_img.resize(size=(self.WIDTH, self.HEIGHT)))
             diff_img = diff_img.reshape(1, self.HEIGHT, self.WIDTH)
             img = np.array(img.resize(size=(self.WIDTH, self.HEIGHT)))
             img = np.moveaxis(img, -1, 0)
             img = np.concatenate((img, diff_img), axis=0)
         else:
-            img = np.array(img.resize(size=(self.WIDTH, self.HEIGHT)))
+            img = np.array(img.resize(size=(self.WIDTH, self.HEIGHT))).astype('float32')
+            img /= 255.
             img = np.moveaxis(img, -1, 0)
         return img
 
@@ -842,6 +845,4 @@ class Video_IterableDataset(IterableDataset):
         if self.bg_mode == 'concat':
             frames = np.concatenate((median_img, frames), axis=0)
         
-        # Normalization
-        frames /= 255.
         return frames
