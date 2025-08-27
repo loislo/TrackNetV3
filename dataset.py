@@ -788,6 +788,7 @@ class Video_IterableDataset(IterableDataset):
             if not success:
                 break
             frame_list.append(frame)
+        print(f'\rprocessed percent: 100.00%')
         median = np.median(frame_list, 0)[..., ::-1] # BGR to RGB
         if self.bg_mode == 'concat':
             median = Image.fromarray(median.astype('uint8'))
