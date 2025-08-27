@@ -24,7 +24,7 @@ def predict(indices, y_pred=None, c_pred=None, img_scaler=(1, 1)):
             pred_dict (Dict): dictionary of predicted coordinates
                 Format: {'Frame':[], 'X':[], 'Y':[], 'Visibility':[]}
     """
-
+    start_time = time.time()
     pred_dict = {'Frame':[], 'X':[], 'Y':[], 'Visibility':[]}
 
     batch_size, seq_len = indices.shape[0], indices.shape[1]
@@ -65,7 +65,7 @@ def predict(indices, y_pred=None, c_pred=None, img_scaler=(1, 1)):
                 prev_f_i = f_i
             else:
                 break
-    
+    print(f'Predict time taken: {time.time() - start_time:.2f}s')
     return pred_dict    
 
 if __name__ == '__main__':

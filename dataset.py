@@ -793,9 +793,9 @@ class Video_IterableDataset(IterableDataset):
             if not success:
                 break
             frame_list.append(frame)
-            # if len(frame_list) >= 10:
-            #     medians.append(np.median(np.array(frame_list), 0))
-            #     frame_list = []
+            if len(frame_list) >= 10:
+                medians.append(np.median(np.array(frame_list), 0))
+                frame_list = []
         if len(frame_list) > 0:
             medians.append(np.median(np.array(frame_list), 0))
         print(f'processed percent: 100.00%')
