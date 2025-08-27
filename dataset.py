@@ -720,12 +720,17 @@ class Video_IterableDataset(IterableDataset):
         success = True
         start_f_id, end_f_id = 0, 0
         frame_list = []
+        i = 0
         while success:
             # Sample frames
             while len(frame_list) < self.seq_len:
                 success, frame = self.cap.read()
+                print(f'read frame {i}')
+                i += 1
                 if not success:
                     break
+                frame = np.array(frame)
+                frame = frame[..., ::-1]
                 img = Image.fromarray(frame)
                 img = self.__process_image__(img)
                 frame_list.append(img)
@@ -738,7 +743,7 @@ class Video_IterableDataset(IterableDataset):
                 data_idx.extend([(0, end_f_id-1)]*(self.seq_len - len(data_idx)))
                 frame_list.extend([frame_list[-1]]*(self.seq_len - len(frame_list)))
             data_idx = np.array(data_idx)
-            frames = self.__process__(np.array(frame_list)[..., ::-1])
+            frames = self.__process__(frame_list)
             yield data_idx, frames
 
             # Update the sliding window
@@ -809,14 +814,11 @@ class Video_IterableDataset(IterableDataset):
             median_img = self.median
         frames = np.array([]).reshape(0, self.HEIGHT, self.WIDTH)
         for i in range(self.seq_len):
-            print(f'Processing frame {i}')
             frames = np.concatenate((frames, imgs[i]), axis=0)
-            print(f'Frame {i} processed. Frames shape: {frames.shape}')
         
         if self.bg_mode == 'concat':
             frames = np.concatenate((median_img, frames), axis=0)
         
         # Normalization
         frames /= 255.
-        print(f'All frames processed. Frames shape: {frames.shape}')
         return frames
