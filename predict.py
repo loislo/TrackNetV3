@@ -83,6 +83,8 @@ if __name__ == '__main__':
     parser.add_argument('--traj_len', type=int, default=8, help='length of trajectory to draw on video')
     args = parser.parse_args()
 
+    print(f'eval mode: {args.eval_mode}')
+    
     num_workers = args.batch_size if args.batch_size <= 16 else 16
     video_file = args.video_file
     video_name = video_file.split('/')[-1][:-4]
@@ -101,6 +103,7 @@ if __name__ == '__main__':
     tracknet_ckpt = torch.load(args.tracknet_file, map_location=device)
     tracknet_seq_len = tracknet_ckpt['param_dict']['seq_len']
     bg_mode = tracknet_ckpt['param_dict']['bg_mode']
+    print(f'Background mode: {bg_mode}')
     tracknet = get_model('TrackNet', tracknet_seq_len, bg_mode).to(device)
     tracknet.load_state_dict(tracknet_ckpt['model'])
 
