@@ -778,6 +778,8 @@ class Video_IterableDataset(IterableDataset):
         print(f'Sample every {sample_step} frames from frame {start_frame} to frame {end_frame}.')
         frame_list = []
         last_reported_percent = 0.
+        medians = []
+        sum_image = None
         for i in range(start_frame, end_frame, sample_step):
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, i)
             success, frame = self.cap.read()
@@ -789,9 +791,16 @@ class Video_IterableDataset(IterableDataset):
             if not success:
                 break
             frame_list.append(frame)
+            if len(frame_list) >= 10:
+                medians.append(np.median(np.array(frame_list), 0))
+                frame_list = []
+        if len(frame_list) > 0:
+            medians.append(np.median(np.array(frame_list), 0))
         print(f'processed percent: 100.00%')
-        print(f'Total {len(frame_list)} frames sampled.')
-        median = np.median(frame_list, 0)
+
+        print(f'Shape of medians: {np.array(medians).shape}')
+        median = np.median(np.array(medians), 0)
+        print(f'Medians of {len(medians)} segments calculated.')
         if self.bg_mode == 'concat':
             median = Image.fromarray(median.astype('uint8'))
             median = np.array(median.resize(size=(self.WIDTH, self.HEIGHT)))
@@ -822,12 +831,12 @@ class Video_IterableDataset(IterableDataset):
 
     def __process__(self, imgs):
         """ Process the frame sequence. """
-        if self.bg_mode:
-            median_img = self.median
         frames = np.array([]).reshape(0, self.HEIGHT, self.WIDTH)
         for i in range(self.seq_len):
             frames = np.concatenate((frames, imgs[i]), axis=0)
         
+        if self.bg_mode:
+            median_img = self.median
         if self.bg_mode == 'concat':
             frames = np.concatenate((median_img, frames), axis=0)
         
