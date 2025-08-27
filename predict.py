@@ -1,7 +1,6 @@
 import os
 import argparse
 import numpy as np
-from tqdm import tqdm
 
 import torch
 from torch.utils.data import DataLoader
@@ -140,7 +139,7 @@ if __name__ == '__main__':
                                                  frame_arr=np.array(frame_list)[:, :, :, ::-1], padding=True)
             data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=num_workers, drop_last=False)
 
-        for step, (i, x) in enumerate(tqdm(data_loader)):
+        for step, (i, x) in enumerate(data_loader):
             x = x.float().to(device)
             with torch.no_grad():
                 y_pred = tracknet(x).detach().cpu()
@@ -173,7 +172,7 @@ if __name__ == '__main__':
         frame_i = torch.arange(seq_len-1, -1, -1) # [7, 6, 5, 4, 3, 2, 1, 0]
         y_pred_buffer = torch.zeros((buffer_size, seq_len, HEIGHT, WIDTH), dtype=torch.float32)
         weight = get_ensemble_weight(seq_len, args.eval_mode)
-        for step, (i, x) in enumerate(tqdm(data_loader)):
+        for step, (i, x) in enumerate(data_loader):
             x = x.float().to(device)
             b_size, seq_len = i.shape[0], i.shape[1]
             with torch.no_grad():
@@ -227,7 +226,7 @@ if __name__ == '__main__':
             dataset = Shuttlecock_Trajectory_Dataset(seq_len=seq_len, sliding_step=seq_len, data_mode='coordinate', pred_dict=tracknet_pred_dict, padding=True)
             data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=num_workers, drop_last=False)
 
-            for step, (i, coor_pred, inpaint_mask) in enumerate(tqdm(data_loader)):
+            for step, (i, coor_pred, inpaint_mask) in enumerate(data_loader):
                 coor_pred, inpaint_mask = coor_pred.float(), inpaint_mask.float()
                 with torch.no_grad():
                     coor_inpaint = inpaintnet(coor_pred.to(device), inpaint_mask.to(device)).detach().cpu()
@@ -255,7 +254,7 @@ if __name__ == '__main__':
             frame_i = torch.arange(seq_len-1, -1, -1) # [7, 6, 5, 4, 3, 2, 1, 0]
             coor_inpaint_buffer = torch.zeros((buffer_size, seq_len, 2), dtype=torch.float32)
             
-            for step, (i, coor_pred, inpaint_mask) in enumerate(tqdm(data_loader)):
+            for step, (i, coor_pred, inpaint_mask) in enumerate(data_loader):
                 coor_pred, inpaint_mask = coor_pred.float(), inpaint_mask.float()
                 b_size = i.shape[0]
                 with torch.no_grad():

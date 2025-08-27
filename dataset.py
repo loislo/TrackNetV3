@@ -728,7 +728,7 @@ class Video_IterableDataset(IterableDataset):
                 success, frame = self.cap.read()
                 percent = i / self.video_len * 100
                 if percent - last_reported_percent > 1.:
-                    print(f'\rprocessed percent: {percent:.2f}%', end='')
+                    print(f'read file: {percent:.2f}%', end='\r')
                     last_reported_percent = percent
                 i += 1
                 if not success:
