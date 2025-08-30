@@ -1,9 +1,12 @@
 .gitignore
-.DS_Store/
+.DS_Store
+**/.DS_Store/
+build/
 data/
 test/
 ckpts/
 figure/
+raw_video/*.csv
 __pycache__/
 utils/__pycache__/
 prediction/
