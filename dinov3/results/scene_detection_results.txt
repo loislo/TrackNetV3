@@ -1,0 +1,40 @@
+DINOv3 Video Scene Detection Results
+=====================================
+Video: ../raw_video/18-processed.mp4
+Total frames: 0
+FPS: 0
+Resolution: 0x0
+Processed frames: 200
+Sample interval: 5
+Similarity threshold: 0.85
+Minimum scene length: 30 frames
+
+Detected Scenes:
+===============
+Scene 1:
+  Start time: 0.20s
+  End time: 16.60s
+  Duration: 16.40s
+  Start frame: 0
+  End frame: 410
+  Frame count: 411
+  Scene type: simple_scene
+
+Scene 2:
+  Start time: 17.00s
+  End time: 19.60s
+  Duration: 2.60s
+  Start frame: 420
+  End frame: 485
+  Frame count: 66
+  Scene type: simple_scene
+
+Scene 3:
+  Start time: 20.80s
+  End time: 40.00s
+  Duration: 19.20s
+  Start frame: 515
+  End frame: 995
+  Frame count: 481
+  Scene type: simple_scene
+

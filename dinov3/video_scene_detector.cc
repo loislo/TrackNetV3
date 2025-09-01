@@ -7,6 +7,8 @@
 #include <fstream>
 #include <cmath>
 #include <algorithm>
+#include <iomanip>
+#include <cstdio>
 #include <absl/flags/flag.h>
 #include <absl/flags/parse.h>
 #include <absl/flags/usage.h>
@@ -16,9 +18,11 @@ ABSL_FLAG(std::string, video, "", "Path to input video file (required)");
 ABSL_FLAG(double, threshold, 0.85, "Similarity threshold for scene change detection (0.0-1.0)");
 ABSL_FLAG(int, min_scene_length, 30, "Minimum frames per scene");
 ABSL_FLAG(int, sample_interval, 5, "Sample every Nth frame for efficiency");
+ABSL_FLAG(int, max_frames, 0, "Maximum number of frames to process (0 = no limit)");
 ABSL_FLAG(std::string, output_dir, "results", "Output directory for results");
 ABSL_FLAG(bool, verbose, false, "Enable verbose output");
 ABSL_FLAG(bool, save_features, true, "Save feature vectors to CSV file");
+ABSL_FLAG(bool, extract_scenes, false, "Extract each scene as a separate video file");
 ABSL_FLAG(bool, help, false, "Show this help message");
 
 // Structure to store scene information
@@ -127,8 +131,10 @@ void print_usage() {
     std::cout << "  --threshold=<value>     Similarity threshold (0.0-1.0, default: 0.85)" << std::endl;
     std::cout << "  --min_scene_length=<N>  Minimum frames per scene (default: 30)" << std::endl;
     std::cout << "  --sample_interval=<N>   Sample every Nth frame (default: 5)" << std::endl;
+    std::cout << "  --max_frames=<N>        Maximum frames to process (default: 0 = no limit)" << std::endl;
     std::cout << "  --output_dir=<path>     Output directory (default: results)" << std::endl;
     std::cout << "  --save_features         Save feature vectors to CSV (default: true)" << std::endl;
+    std::cout << "  --extract_scenes        Extract each scene as separate video file (default: false)" << std::endl;
     std::cout << "  --verbose               Enable verbose output" << std::endl;
     std::cout << "  --help                  Show this help message" << std::endl;
     std::cout << std::endl;
@@ -136,11 +142,13 @@ void print_usage() {
     std::cout << "  video_scene_detector --video=raw_video/1_1_9_5.mp4" << std::endl;
     std::cout << "  video_scene_detector --video=video.mp4 --threshold=0.9 --verbose" << std::endl;
     std::cout << "  video_scene_detector --video=video.mp4 --min_scene_length=60 --sample_interval=2" << std::endl;
+    std::cout << "  video_scene_detector --video=video.mp4 --max_frames=100 --verbose" << std::endl;
+    std::cout << "  video_scene_detector --video=video.mp4 --extract_scenes --verbose" << std::endl;
 }
 
 // Function to validate command-line arguments
 bool validate_arguments(const std::string& video_path, double similarity_threshold, 
-                       int min_scene_length, int sample_interval) {
+                       int min_scene_length, int sample_interval, int max_frames) {
     // Validate required arguments
     if (video_path.empty()) {
         std::cerr << "Error: --video flag is required!" << std::endl;
@@ -165,21 +173,28 @@ bool validate_arguments(const std::string& video_path, double similarity_thresho
         return false;
     }
     
+    if (max_frames < 0) {
+        std::cerr << "Error: --max_frames must be non-negative!" << std::endl;
+        return false;
+    }
+    
     return true;
 }
 
 // Function to print configuration information
 void print_configuration(const std::string& video_path, double similarity_threshold,
-                        int min_scene_length, int sample_interval, 
-                        const std::string& output_dir, bool save_features) {
+                        int min_scene_length, int sample_interval, int max_frames,
+                        const std::string& output_dir, bool save_features, bool extract_scenes) {
     std::cout << "DINOv3 Video Scene Detector" << std::endl;
     std::cout << "===========================" << std::endl;
     std::cout << "Video file: " << video_path << std::endl;
     std::cout << "Similarity threshold: " << similarity_threshold << std::endl;
     std::cout << "Minimum scene length: " << min_scene_length << " frames" << std::endl;
     std::cout << "Sample interval: " << sample_interval << std::endl;
+    std::cout << "Max frames to process: " << (max_frames == 0 ? "unlimited" : std::to_string(max_frames)) << std::endl;
     std::cout << "Output directory: " << output_dir << std::endl;
     std::cout << "Save features: " << (save_features ? "yes" : "no") << std::endl;
+    std::cout << "Extract scenes: " << (extract_scenes ? "yes" : "no") << std::endl;
     std::cout << std::endl;
 }
 
@@ -259,28 +274,53 @@ void get_video_properties(cv::VideoCapture& cap, bool verbose) {
 // Function to process video frames and extract features
 std::pair<std::vector<std::vector<float>>, std::vector<double>> process_video_frames(
     cv::VideoCapture& cap, torch::jit::script::Module& model, 
-    const torch::Device& device, int sample_interval, bool verbose) {
+    const torch::Device& device, int sample_interval, int max_frames, bool verbose) {
     
     std::vector<std::vector<float>> frame_features;
     std::vector<double> frame_timestamps;
+    
+    // Get total frames for progress calculation
+    int total_frames = cap.get(cv::CAP_PROP_FRAME_COUNT);
+    double fps = cap.get(cv::CAP_PROP_FPS);
+    
+    // Apply max_frames limit if specified
+    int effective_total_frames = total_frames;
+    if (max_frames > 0 && max_frames < total_frames) {
+        effective_total_frames = max_frames;
+    }
+    
+    int estimated_processed_frames = (effective_total_frames + sample_interval - 1) / sample_interval;
     
     cv::Mat frame;
     int frame_count = 0;
     int processed_frames = 0;
     
-    if (verbose) std::cout << "\nProcessing video frames..." << std::endl;
+    if (verbose) {
+        std::cout << "\nProcessing video frames..." << std::endl;
+        std::cout << "Total frames: " << total_frames;
+        if (max_frames > 0 && max_frames < total_frames) {
+            std::cout << " (limited to " << max_frames << ")";
+        }
+        std::cout << ", Sample interval: " << sample_interval << std::endl;
+        std::cout << "Estimated frames to process: " << estimated_processed_frames << std::endl;
+    }
     
     torch::NoGradGuard no_grad;
+    auto start_time = std::chrono::high_resolution_clock::now();
     
     while (cap.read(frame)) {
         frame_count++;
+        
+        // Check if we've reached the maximum frame limit
+        if (max_frames > 0 && frame_count > max_frames) {
+            break;
+        }
         
         // Sample frames at regular intervals for efficiency
         if (frame_count % sample_interval != 0) {
             continue;
         }
         
-        double fps = cap.get(cv::CAP_PROP_FPS);
         double timestamp = frame_count / fps;
         
         // Preprocess frame
@@ -306,13 +346,44 @@ std::pair<std::vector<std::vector<float>>, std::vector<double>> process_video_fr
             frame_timestamps.push_back(timestamp);
             processed_frames++;
             
-            if (verbose && processed_frames % 10 == 0) {
-                std::cout << "Processed " << processed_frames << " frames..." << std::endl;
+            // Enhanced progress reporting
+            if (verbose) {
+                // Calculate progress percentage
+                double progress_percent = (double)processed_frames / estimated_processed_frames * 100.0;
+                
+                // Show detailed progress every frame for testing, then every 5 frames
+                if (processed_frames <= 3 || processed_frames % 5 == 0 || processed_frames == 1) {
+                    auto current_time = std::chrono::high_resolution_clock::now();
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - start_time);
+                    double avg_time_per_frame = elapsed.count() / (double)processed_frames;
+                    int eta_ms = (estimated_processed_frames - processed_frames) * avg_time_per_frame;
+                    
+                    // Create progress bar string
+                    std::string progress_bar = std::string((int)(progress_percent / 5), '=') + 
+                                             std::string(20 - (int)(progress_percent / 5), ' ');
+                    
+                    printf("\rProgress: [%s] %.1f%% (%d/%d) Frame: %d/%d Time: %.2fs Avg: %.0fms/frame ETA: %ds    ",
+                           progress_bar.c_str(),
+                           progress_percent,
+                           processed_frames, estimated_processed_frames,
+                           frame_count, effective_total_frames,
+                           timestamp,
+                           avg_time_per_frame,
+                           eta_ms / 1000);
+                    fflush(stdout);
+                }
             }
         }
     }
     
-    if (verbose) std::cout << "Finished processing " << processed_frames << " frames." << std::endl;
+    if (verbose) {
+        auto end_time = std::chrono::high_resolution_clock::now();
+        auto total_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+        printf("\n\nFinished processing %d frames in %.1f seconds.\n", 
+               processed_frames, total_elapsed.count() / 1000.0);
+        printf("Average processing time: %.1f ms/frame\n", 
+               (double)total_elapsed.count() / processed_frames);
+    }
     
     return {frame_features, frame_timestamps};
 }
@@ -334,7 +405,7 @@ std::vector<SceneInfo> detect_scenes(const std::vector<std::vector<float>>& fram
     
     // Start with the first frame as a new scene
     SceneInfo current_scene;
-    current_scene.start_frame = 0;
+    current_scene.start_frame = 0 * sample_interval;  // Convert to actual frame number
     current_scene.start_time = frame_timestamps[0];
     current_scene.representative_features = frame_features[0];
     current_scene.scene_type = classify_scene_type(frame_features[0]);
@@ -345,16 +416,16 @@ std::vector<SceneInfo> detect_scenes(const std::vector<std::vector<float>>& fram
         // Check if this is a scene change
         if (similarity < similarity_threshold) {
             // End current scene
-            current_scene.end_frame = i - 1;
+            current_scene.end_frame = (i - 1) * sample_interval;  // Convert to actual frame number
             current_scene.end_time = frame_timestamps[i - 1];
             
             // Only add scene if it's long enough
-            if (current_scene.end_frame - current_scene.start_frame >= min_scene_length / sample_interval) {
+            if ((current_scene.end_frame - current_scene.start_frame + 1) >= min_scene_length) {
                 scenes.push_back(current_scene);
             }
             
             // Start new scene
-            current_scene.start_frame = i;
+            current_scene.start_frame = i * sample_interval;  // Convert to actual frame number
             current_scene.start_time = frame_timestamps[i];
             current_scene.representative_features = frame_features[i];
             current_scene.scene_type = classify_scene_type(frame_features[i]);
@@ -362,9 +433,9 @@ std::vector<SceneInfo> detect_scenes(const std::vector<std::vector<float>>& fram
     }
     
     // Add the last scene
-    current_scene.end_frame = frame_features.size() - 1;
+    current_scene.end_frame = (frame_features.size() - 1) * sample_interval;  // Convert to actual frame number
     current_scene.end_time = frame_timestamps.back();
-    if (current_scene.end_frame - current_scene.start_frame >= min_scene_length / sample_interval) {
+    if ((current_scene.end_frame - current_scene.start_frame + 1) >= min_scene_length) {
         scenes.push_back(current_scene);
     }
     
@@ -379,15 +450,15 @@ void print_scene_results(const std::vector<SceneInfo>& scenes, int sample_interv
     
     for (size_t i = 0; i < scenes.size(); ++i) {
         const auto& scene = scenes[i];
-        int scene_frames = (scene.end_frame - scene.start_frame + 1) * sample_interval;
+        int scene_frames = scene.end_frame - scene.start_frame + 1;
         double scene_duration = scene.end_time - scene.start_time;
         
         std::cout << "Scene " << (i + 1) << ":" << std::endl;
         std::cout << "  Time: " << std::fixed << std::setprecision(2) 
                   << scene.start_time << "s - " << scene.end_time << "s (" 
                   << scene_duration << "s)" << std::endl;
-        std::cout << "  Frames: " << scene.start_frame * sample_interval << " - " 
-                  << scene.end_frame * sample_interval << " (" << scene_frames << " frames)" << std::endl;
+        std::cout << "  Frames: " << scene.start_frame << " - " 
+                  << scene.end_frame << " (" << scene_frames << " frames)" << std::endl;
         std::cout << "  Type: " << scene.scene_type << std::endl;
         std::cout << std::endl;
     }
@@ -419,15 +490,15 @@ void save_detailed_results(const std::vector<SceneInfo>& scenes, const std::stri
         
         for (size_t i = 0; i < scenes.size(); ++i) {
             const auto& scene = scenes[i];
-            int scene_frames = (scene.end_frame - scene.start_frame + 1) * sample_interval;
+            int scene_frames = scene.end_frame - scene.start_frame + 1;
             double scene_duration = scene.end_time - scene.start_time;
             
             file << "Scene " << (i + 1) << ":" << std::endl;
             file << "  Start time: " << std::fixed << std::setprecision(2) << scene.start_time << "s" << std::endl;
             file << "  End time: " << std::fixed << std::setprecision(2) << scene.end_time << "s" << std::endl;
             file << "  Duration: " << std::fixed << std::setprecision(2) << scene_duration << "s" << std::endl;
-            file << "  Start frame: " << scene.start_frame * sample_interval << std::endl;
-            file << "  End frame: " << scene.end_frame * sample_interval << std::endl;
+            file << "  Start frame: " << scene.start_frame << std::endl;
+            file << "  End frame: " << scene.end_frame << std::endl;
             file << "  Frame count: " << scene_frames << std::endl;
             file << "  Scene type: " << scene.scene_type << std::endl;
             file << std::endl;
@@ -467,6 +538,92 @@ void save_feature_vectors(const std::vector<std::vector<float>>& frame_features,
     }
 }
 
+// Function to extract scene videos
+void extract_scene_videos(const std::vector<SceneInfo>& scenes, const std::string& video_path,
+                         const std::string& output_dir, bool verbose) {
+    if (scenes.empty()) {
+        if (verbose) std::cout << "No scenes to extract." << std::endl;
+        return;
+    }
+    
+    if (verbose) {
+        std::cout << "\nExtracting scene videos..." << std::endl;
+        std::cout << "Input video: " << video_path << std::endl;
+        std::cout << "Output directory: " << output_dir << std::endl;
+    }
+    
+    // Open the original video
+    cv::VideoCapture cap(video_path);
+    if (!cap.isOpened()) {
+        std::cerr << "Error: Could not open video file for scene extraction: " << video_path << std::endl;
+        return;
+    }
+    
+    // Get video properties
+    double fps = cap.get(cv::CAP_PROP_FPS);
+    int width = cap.get(cv::CAP_PROP_FRAME_WIDTH);
+    int height = cap.get(cv::CAP_PROP_FRAME_HEIGHT);
+    int fourcc = cap.get(cv::CAP_PROP_FOURCC);
+    
+    if (verbose) {
+        std::cout << "Video properties - FPS: " << fps << ", Resolution: " << width << "x" << height << std::endl;
+    }
+    
+    // Extract each scene
+    for (size_t scene_idx = 0; scene_idx < scenes.size(); ++scene_idx) {
+        const auto& scene = scenes[scene_idx];
+        
+        // Create output filename
+        std::string scene_filename = output_dir + "/scene_" + std::to_string(scene_idx + 1) + 
+                                   "_" + scene.scene_type + ".mp4";
+        
+        if (verbose) {
+            printf("Extracting scene %zu: frames %d-%d (%.2fs-%.2fs) -> %s\n",
+                   scene_idx + 1, scene.start_frame, scene.end_frame,
+                   scene.start_time, scene.end_time, scene_filename.c_str());
+        }
+        
+        // Create video writer
+        cv::VideoWriter writer(scene_filename, cv::VideoWriter::fourcc('m', 'p', '4', 'v'), 
+                              fps, cv::Size(width, height));
+        
+        if (!writer.isOpened()) {
+            std::cerr << "Error: Could not create output video: " << scene_filename << std::endl;
+            continue;
+        }
+        
+        // Seek to start frame
+        cap.set(cv::CAP_PROP_POS_FRAMES, scene.start_frame);
+        
+        cv::Mat frame;
+        int frames_written = 0;
+        int target_frames = scene.end_frame - scene.start_frame + 1;
+        
+        // Extract frames for this scene
+        while (frames_written < target_frames && cap.read(frame)) {
+            writer.write(frame);
+            frames_written++;
+            
+            if (verbose && frames_written % 50 == 0) {
+                printf("\r  Writing frame %d/%d", frames_written, target_frames);
+                fflush(stdout);
+            }
+        }
+        
+        if (verbose) {
+            printf("\r  Completed: %d frames written\n", frames_written);
+        }
+        
+        writer.release();
+    }
+    
+    cap.release();
+    
+    if (verbose) {
+        std::cout << "Scene extraction completed! Extracted " << scenes.size() << " scene videos." << std::endl;
+    }
+}
+
 int main(int argc, char* argv[]) {
     // Set program name for help messages
     absl::SetProgramUsageMessage("DINOv3 Video Scene Detector - Detect scene changes and camera angles in videos");
@@ -485,19 +642,21 @@ int main(int argc, char* argv[]) {
     double similarity_threshold = absl::GetFlag(FLAGS_threshold);
     int min_scene_length = absl::GetFlag(FLAGS_min_scene_length);
     int sample_interval = absl::GetFlag(FLAGS_sample_interval);
+    int max_frames = absl::GetFlag(FLAGS_max_frames);
     std::string output_dir = absl::GetFlag(FLAGS_output_dir);
     bool verbose = absl::GetFlag(FLAGS_verbose);
     bool save_features = absl::GetFlag(FLAGS_save_features);
+    bool extract_scenes = absl::GetFlag(FLAGS_extract_scenes);
     
     // Validate arguments
-    if (!validate_arguments(video_path, similarity_threshold, min_scene_length, sample_interval)) {
+    if (!validate_arguments(video_path, similarity_threshold, min_scene_length, sample_interval, max_frames)) {
         return -1;
     }
     
     // Print configuration
     if (verbose) {
         print_configuration(video_path, similarity_threshold, min_scene_length, 
-                           sample_interval, output_dir, save_features);
+                           sample_interval, max_frames, output_dir, save_features, extract_scenes);
     }
     
     try {
@@ -519,7 +678,7 @@ int main(int argc, char* argv[]) {
         
         // Process video frames and extract features
         auto [frame_features, frame_timestamps] = process_video_frames(
-            cap, model, device, sample_interval, verbose);
+            cap, model, device, sample_interval, max_frames, verbose);
         
         cap.release();
         
@@ -544,6 +703,11 @@ int main(int argc, char* argv[]) {
         // Save feature vectors if requested
         if (save_features) {
             save_feature_vectors(frame_features, frame_timestamps, sample_interval, output_dir);
+        }
+        
+        // Extract scene videos if requested
+        if (extract_scenes) {
+            extract_scene_videos(scenes, video_path, output_dir, verbose);
         }
         
         std::cout << "\nScene detection completed successfully!" << std::endl;

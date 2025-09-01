@@ -4,19 +4,19 @@ Video: ../raw_video/1_1_9_5.mp4
 Total frames: 57
 FPS: 25
 Resolution: 1920x1080
-Processed frames: 11
-Sample interval: 5
+Processed frames: 57
+Sample interval: 1
 Similarity threshold: 0.85
 Minimum scene length: 30 frames
 
 Detected Scenes:
 ===============
 Scene 1:
-  Start time: 0.20s
-  End time: 2.20s
-  Duration: 2.00s
+  Start time: 0.04s
+  End time: 2.28s
+  Duration: 2.24s
   Start frame: 0
-  End frame: 50
-  Frame count: 55
+  End frame: 56
+  Frame count: 57
   Scene type: simple_scene
 

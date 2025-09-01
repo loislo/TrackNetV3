@@ -40,13 +40,13 @@ make                        # Build all executables
 ### Basic Scene Detection
 ```bash
 cd dinov3
-../build/video_scene_detector --video=../raw_video/1_1_9_5.mp4
+../build/dinov3/video_scene_detector --video=../raw_video/1_1_9_5.mp4
 ```
 
 ### With Custom Parameters
 ```bash
 cd dinov3
-../build/video_scene_detector \
+../build/dinov3/video_scene_detector \
     --video=../raw_video/1_1_9_5.mp4 \
     --threshold=0.9 \
     --sample_interval=2 \
