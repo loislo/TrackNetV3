@@ -1,8 +1,28 @@
-from transformers import AutoImageProcessor, AutoModel
+from transformers import AutoModel
 import torch
 import sys
+import argparse
 
-model_version = "vith16plus"
+# Define available model versions
+AVAILABLE_MODELS = {
+    'vitl16': 'facebook/dinov3-vitl16-pretrain-lvd1689m',
+    'vits16': 'facebook/dinov3-vits16-pretrain-lvd1689m', 
+    'vits16plus': 'facebook/dinov3-vits16plus-pretrain-lvd1689m',
+    'vitb16': 'facebook/dinov3-vitb16-pretrain-lvd1689m',
+    'vith16plus': 'facebook/dinov3-vith16plus-pretrain-lvd1689m'
+}
+
+# Parse command line arguments
+parser = argparse.ArgumentParser(description='Trace DINOv3 model for C++ deployment')
+parser.add_argument('--model_version', 
+                    choices=list(AVAILABLE_MODELS.keys()),
+                    default='vits16',
+                    help='DINOv3 model version to use (default: vits16)')
+args = parser.parse_args()
+
+model_version = args.model_version
+model_name = AVAILABLE_MODELS[model_version]
+
 # Create a wrapper class to handle the dictionary output
 class DINOv3Wrapper(torch.nn.Module):
     def __init__(self, model):
@@ -28,13 +48,12 @@ else:
     print(f"Using CPU device: {device}")
 
 # 1. Load a Pretrained DINOv3 Model
-# DINOv3 models are available through torch.hub from the official repository.
-# Here we load the smallest variant, ViT-Small with patch size 16.
-# For a full list of available models, see the DINOv3 GitHub repository.
+# DINOv3 models are available through the transformers library.
+# Load the specified model version from command line arguments.
+print(f"Loading DINOv3 model: {model_version} ({model_name})")
 try:
-    model_name = f"facebook/dinov3-{model_version}-pretrain-lvd1689m"
     dinov3 = AutoModel.from_pretrained(model_name)
-    print(f"Successfully loaded DINOv3 {model_name} model.")
+    print(f"Successfully loaded DINOv3 {model_version} model.")
 except Exception as e:
     print(f"Error loading model: {e}", file=sys.stderr)
     sys.exit(1)
@@ -82,7 +101,7 @@ except Exception as e:
 # 7. Save the Traced Model to a File
 # The resulting ScriptModule is saved to a '.pt' file, which can be
 # loaded directly by LibTorch in C++.
-output_path = "dinov3.pt"
+output_path = f"dinov3_{model_version}_traced.pt"
 traced_model.save(output_path)
 print(f"Traced model saved to: {output_path}")
 

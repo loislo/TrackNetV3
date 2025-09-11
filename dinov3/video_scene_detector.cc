@@ -15,6 +15,7 @@
 
 // Define command-line flags
 ABSL_FLAG(std::string, video, "", "Path to input video file (required)");
+ABSL_FLAG(std::string, model_version, "vith16plus", "DINOv3 model version (vitl16, vits16, vits16plus, vitb16, vith16plus)");
 ABSL_FLAG(double, threshold, 0.85, "Similarity threshold for scene change detection (0.0-1.0)");
 ABSL_FLAG(int, min_scene_length, 30, "Minimum frames per scene");
 ABSL_FLAG(int, sample_interval, 5, "Sample every Nth frame for efficiency");
@@ -128,6 +129,7 @@ void print_usage() {
     std::cout << "  --video=<path>          Path to input video file" << std::endl;
     std::cout << std::endl;
     std::cout << "Options:" << std::endl;
+    std::cout << "  --model_version=<ver>   DINOv3 model version (vitl16, vits16, vits16plus, vitb16, vith16plus, default: vits16)" << std::endl;
     std::cout << "  --threshold=<value>     Similarity threshold (0.0-1.0, default: 0.85)" << std::endl;
     std::cout << "  --min_scene_length=<N>  Minimum frames per scene (default: 30)" << std::endl;
     std::cout << "  --sample_interval=<N>   Sample every Nth frame (default: 5)" << std::endl;
@@ -140,19 +142,32 @@ void print_usage() {
     std::cout << std::endl;
     std::cout << "Examples:" << std::endl;
     std::cout << "  video_scene_detector --video=raw_video/1_1_9_5.mp4" << std::endl;
-    std::cout << "  video_scene_detector --video=video.mp4 --threshold=0.9 --verbose" << std::endl;
-    std::cout << "  video_scene_detector --video=video.mp4 --min_scene_length=60 --sample_interval=2" << std::endl;
+    std::cout << "  video_scene_detector --video=video.mp4 --model_version=vitb16 --threshold=0.9 --verbose" << std::endl;
+    std::cout << "  video_scene_detector --video=video.mp4 --model_version=vith16plus --min_scene_length=60 --sample_interval=2" << std::endl;
     std::cout << "  video_scene_detector --video=video.mp4 --max_frames=100 --verbose" << std::endl;
     std::cout << "  video_scene_detector --video=video.mp4 --extract_scenes --verbose" << std::endl;
 }
 
+// Function to validate model version
+bool validate_model_version(const std::string& model_version) {
+    const std::vector<std::string> valid_models = {"vitl16", "vits16", "vits16plus", "vitb16", "vith16plus"};
+    return std::find(valid_models.begin(), valid_models.end(), model_version) != valid_models.end();
+}
+
 // Function to validate command-line arguments
-bool validate_arguments(const std::string& video_path, double similarity_threshold, 
-                       int min_scene_length, int sample_interval, int max_frames) {
+bool validate_arguments(const std::string& video_path, const std::string& model_version, 
+                       double similarity_threshold, int min_scene_length, int sample_interval, int max_frames) {
     // Validate required arguments
     if (video_path.empty()) {
         std::cerr << "Error: --video flag is required!" << std::endl;
         std::cerr << "Use --help for usage information." << std::endl;
+        return false;
+    }
+    
+    // Validate model version
+    if (!validate_model_version(model_version)) {
+        std::cerr << "Error: Invalid model version '" << model_version << "'!" << std::endl;
+        std::cerr << "Valid options: vitl16, vits16, vits16plus, vitb16, vith16plus" << std::endl;
         return false;
     }
     
@@ -182,12 +197,13 @@ bool validate_arguments(const std::string& video_path, double similarity_thresho
 }
 
 // Function to print configuration information
-void print_configuration(const std::string& video_path, double similarity_threshold,
-                        int min_scene_length, int sample_interval, int max_frames,
-                        const std::string& output_dir, bool save_features, bool extract_scenes) {
+void print_configuration(const std::string& video_path, const std::string& model_version,
+                        double similarity_threshold, int min_scene_length, int sample_interval, 
+                        int max_frames, const std::string& output_dir, bool save_features, bool extract_scenes) {
     std::cout << "DINOv3 Video Scene Detector" << std::endl;
     std::cout << "===========================" << std::endl;
     std::cout << "Video file: " << video_path << std::endl;
+    std::cout << "Model version: " << model_version << std::endl;
     std::cout << "Similarity threshold: " << similarity_threshold << std::endl;
     std::cout << "Minimum scene length: " << min_scene_length << " frames" << std::endl;
     std::cout << "Sample interval: " << sample_interval << std::endl;
@@ -217,14 +233,15 @@ torch::Device detect_device(bool verbose) {
 }
 
 // Function to load DINOv3 model
-torch::jit::script::Module load_model(const torch::Device& device, bool verbose) {
-    if (verbose) std::cout << "Loading DINOv3 model..." << std::endl;
+torch::jit::script::Module load_model(const std::string& model_version, const torch::Device& device, bool verbose) {
+    if (verbose) std::cout << "Loading DINOv3 model (" << model_version << ")..." << std::endl;
     
-    // Try multiple possible model paths
+    // Try multiple possible model paths for the specified model version
+    std::string model_filename = "dinov3_" + model_version + "_traced.pt";
     std::vector<std::string> possible_paths = {
-        "dinov3/dinov3_vits16_traced.pt",    // From parent directory (most common)
-        "dinov3_vits16_traced.pt",           // From dinov3 directory
-        "../dinov3/dinov3_vits16_traced.pt"  // From other subdirectory
+        "dinov3/" + model_filename,    // From parent directory (most common)
+        model_filename,                // From dinov3 directory
+        "../dinov3/" + model_filename  // From other subdirectory
     };
     
     torch::jit::script::Module model;
@@ -244,7 +261,9 @@ torch::jit::script::Module load_model(const torch::Device& device, bool verbose)
     }
     
     if (successful_path.empty()) {
-        throw std::runtime_error("Could not load DINOv3 model from any of the attempted paths");
+        std::string error_msg = "Could not load DINOv3 model (" + model_version + ") from any of the attempted paths.\n";
+        error_msg += "Make sure you have traced the model using: python DINOv3_trace.py --model_version=" + model_version;
+        throw std::runtime_error(error_msg);
     }
     
     if (verbose) std::cout << "Successfully loaded model from: " << successful_path << std::endl;
@@ -639,6 +658,7 @@ int main(int argc, char* argv[]) {
     
     // Get flag values
     std::string video_path = absl::GetFlag(FLAGS_video);
+    std::string model_version = absl::GetFlag(FLAGS_model_version);
     double similarity_threshold = absl::GetFlag(FLAGS_threshold);
     int min_scene_length = absl::GetFlag(FLAGS_min_scene_length);
     int sample_interval = absl::GetFlag(FLAGS_sample_interval);
@@ -649,13 +669,13 @@ int main(int argc, char* argv[]) {
     bool extract_scenes = absl::GetFlag(FLAGS_extract_scenes);
     
     // Validate arguments
-    if (!validate_arguments(video_path, similarity_threshold, min_scene_length, sample_interval, max_frames)) {
+    if (!validate_arguments(video_path, model_version, similarity_threshold, min_scene_length, sample_interval, max_frames)) {
         return -1;
     }
     
     // Print configuration
     if (verbose) {
-        print_configuration(video_path, similarity_threshold, min_scene_length, 
+        print_configuration(video_path, model_version, similarity_threshold, min_scene_length, 
                            sample_interval, max_frames, output_dir, save_features, extract_scenes);
     }
     
@@ -664,7 +684,7 @@ int main(int argc, char* argv[]) {
         torch::Device device = detect_device(verbose);
         
         // Load DINOv3 model
-        torch::jit::script::Module model = load_model(device, verbose);
+        torch::jit::script::Module model = load_model(model_version, device, verbose);
         
         // Open video file
         cv::VideoCapture cap(video_path);
