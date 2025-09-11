@@ -2,6 +2,7 @@ from transformers import AutoImageProcessor, AutoModel
 import torch
 import sys
 
+model_version = "vith16plus"
 # Create a wrapper class to handle the dictionary output
 class DINOv3Wrapper(torch.nn.Module):
     def __init__(self, model):
@@ -31,9 +32,9 @@ else:
 # Here we load the smallest variant, ViT-Small with patch size 16.
 # For a full list of available models, see the DINOv3 GitHub repository.
 try:
-    processor = AutoImageProcessor.from_pretrained("facebook/dinov3-vit7b16-pretrain-lvd1689m")
-    dinov3_vits16 = AutoModel.from_pretrained("facebook/dinov3-vit7b16-pretrain-lvd1689m")
-    print("Successfully loaded DINOv3 ViT-S/16 model.")
+    model_name = f"facebook/dinov3-{model_version}-pretrain-lvd1689m"
+    dinov3 = AutoModel.from_pretrained(model_name)
+    print(f"Successfully loaded DINOv3 {model_name} model.")
 except Exception as e:
     print(f"Error loading model: {e}", file=sys.stderr)
     sys.exit(1)
@@ -41,12 +42,12 @@ except Exception as e:
 # 2. Set the Model to Evaluation Mode and move to device
 # This is a crucial step that disables layers like Dropout, which behave
 # differently during training and inference.
-dinov3_vits16.eval()
-dinov3_vits16 = dinov3_vits16.to(device)
+dinov3.eval()
+dinov3 = dinov3.to(device)
 print(f"Model set to evaluation mode and moved to device: {device}")
 
 # 3. Wrap the model to handle dictionary output
-wrapped_model = DINOv3Wrapper(dinov3_vits16)
+wrapped_model = DINOv3Wrapper(dinov3)
 wrapped_model.eval()
 wrapped_model = wrapped_model.to(device)
 print("Model wrapped to handle dictionary output.")
@@ -81,7 +82,7 @@ except Exception as e:
 # 7. Save the Traced Model to a File
 # The resulting ScriptModule is saved to a '.pt' file, which can be
 # loaded directly by LibTorch in C++.
-output_path = "dinov3_vits16_traced.pt"
+output_path = "dinov3.pt"
 traced_model.save(output_path)
 print(f"Traced model saved to: {output_path}")
 

@@ -5,7 +5,7 @@ from transformers.image_utils import load_image
 url = "http://images.cocodataset.org/val2017/000000039769.jpg"
 image = load_image(url)
 
-pretrained_model_name = "facebook/dinov3-vit7b16-pretrain-lvd1689m"
+pretrained_model_name = "facebook/dinov3-vith16plus-pretrain-lvd1689m"
 processor = AutoImageProcessor.from_pretrained(pretrained_model_name)
 model = AutoModel.from_pretrained(
     pretrained_model_name, 
