@@ -1,0 +1,14 @@
+# DINOv3 Directory Requirements
+# Core PyTorch and Transformers dependencies for DINOv3 model
+torch>=2.0.0
+transformers>=4.30.0
+
+# Additional utilities used in the scripts
+Pillow>=8.0.0
+numpy>=1.21.0
+
+# Optional: for enhanced performance and compatibility
+accelerate>=0.20.0
+
+# Development/testing dependencies
+tqdm>=4.60.0
