@@ -13,11 +13,39 @@ set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
 
-# Find OpenCV package
-find_package(OpenCV REQUIRED)
+# Find OpenCV package with better error handling
+find_package(OpenCV QUIET)
+if(NOT OpenCV_FOUND)
+    # Try alternative OpenCV finding methods
+    find_package(PkgConfig QUIET)
+    if(PKG_CONFIG_FOUND)
+        pkg_check_modules(OpenCV opencv4 QUIET)
+        if(NOT OpenCV_FOUND)
+            pkg_check_modules(OpenCV opencv QUIET)
+        endif()
+    endif()
+    
+    if(NOT OpenCV_FOUND)
+        message(FATAL_ERROR 
+            "OpenCV not found. Please install OpenCV development packages:\n"
+            "  Ubuntu/Debian: sudo apt-get install libopencv-dev\n"
+            "  CentOS/RHEL: sudo yum install opencv-devel\n"
+            "  Fedora: sudo dnf install opencv-devel\n"
+            "  macOS: brew install opencv\n"
+            "Or set OpenCV_DIR to the OpenCV installation directory.")
+    endif()
+endif()
 
-# Find LibTorch (PyTorch C++ API)
-find_package(Torch REQUIRED)
+# Find LibTorch (PyTorch C++ API) with better error handling
+find_package(Torch QUIET)
+if(NOT Torch_FOUND)
+    message(FATAL_ERROR 
+        "LibTorch not found. Please ensure PyTorch is installed with C++ extensions:\n"
+        "  pip install torch\n"
+        "And set CMAKE_PREFIX_PATH to the torch cmake directory:\n"
+        "  cmake -DCMAKE_PREFIX_PATH=\$(python -c 'import torch; print(torch.utils.cmake_prefix_path)') ..\n"
+        "Or install LibTorch separately from https://pytorch.org/")
+endif()
 
 # Include FetchContent for downloading dependencies
 include(FetchContent)
@@ -30,9 +58,28 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(absl)
 
+# Set up OpenCV variables for consistent usage
+if(OpenCV_FOUND)
+    if(NOT OpenCV_INCLUDE_DIRS AND OpenCV_INCLUDE_DIRS)
+        set(OpenCV_INCLUDE_DIRS ${OpenCV_INCLUDE_DIRS})
+    endif()
+    if(NOT OpenCV_LIBS AND OpenCV_LIBRARIES)
+        set(OpenCV_LIBS ${OpenCV_LIBRARIES})
+    endif()
+    # Handle pkg-config style variables
+    if(OpenCV_CFLAGS_OTHER)
+        set(OpenCV_INCLUDE_DIRS ${OpenCV_INCLUDE_DIRS})
+    endif()
+    if(OpenCV_LDFLAGS)
+        set(OpenCV_LIBS ${OpenCV_LDFLAGS})
+    endif()
+endif()
+
 # Print debug information
+message(STATUS "OpenCV_FOUND: ${OpenCV_FOUND}")
 message(STATUS "OpenCV_VERSION: ${OpenCV_VERSION}")
 message(STATUS "OpenCV_INCLUDE_DIRS: ${OpenCV_INCLUDE_DIRS}")
+message(STATUS "OpenCV_LIBS: ${OpenCV_LIBS}")
 message(STATUS "Torch_FOUND: ${Torch_FOUND}")
 message(STATUS "Torch_INCLUDE_DIRS: ${Torch_INCLUDE_DIRS}")
 message(STATUS "Torch_LIBRARIES: ${Torch_LIBRARIES}")
