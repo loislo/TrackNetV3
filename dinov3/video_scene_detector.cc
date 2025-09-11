@@ -24,7 +24,6 @@ ABSL_FLAG(std::string, output_dir, "results", "Output directory for results");
 ABSL_FLAG(bool, verbose, false, "Enable verbose output");
 ABSL_FLAG(bool, save_features, true, "Save feature vectors to CSV file");
 ABSL_FLAG(bool, extract_scenes, false, "Extract each scene as a separate video file");
-ABSL_FLAG(bool, help, false, "Show this help message");
 
 // Structure to store scene information
 struct SceneInfo {
@@ -116,36 +115,6 @@ std::string classify_scene_type(const std::vector<float>& features) {
     } else {
         return "simple_scene";   // Low variance and mean = simple scene
     }
-}
-
-// Function to print usage information
-void print_usage() {
-    std::cout << "DINOv3 Video Scene Detector" << std::endl;
-    std::cout << "===========================" << std::endl;
-    std::cout << std::endl;
-    std::cout << "Usage: video_scene_detector [options]" << std::endl;
-    std::cout << std::endl;
-    std::cout << "Required:" << std::endl;
-    std::cout << "  --video=<path>          Path to input video file" << std::endl;
-    std::cout << std::endl;
-    std::cout << "Options:" << std::endl;
-    std::cout << "  --model_version=<ver>   DINOv3 model version (vitl16, vits16, vits16plus, vitb16, vith16plus, default: vits16)" << std::endl;
-    std::cout << "  --threshold=<value>     Similarity threshold (0.0-1.0, default: 0.85)" << std::endl;
-    std::cout << "  --min_scene_length=<N>  Minimum frames per scene (default: 30)" << std::endl;
-    std::cout << "  --sample_interval=<N>   Sample every Nth frame (default: 5)" << std::endl;
-    std::cout << "  --max_frames=<N>        Maximum frames to process (default: 0 = no limit)" << std::endl;
-    std::cout << "  --output_dir=<path>     Output directory (default: results)" << std::endl;
-    std::cout << "  --save_features         Save feature vectors to CSV (default: true)" << std::endl;
-    std::cout << "  --extract_scenes        Extract each scene as separate video file (default: false)" << std::endl;
-    std::cout << "  --verbose               Enable verbose output" << std::endl;
-    std::cout << "  --help                  Show this help message" << std::endl;
-    std::cout << std::endl;
-    std::cout << "Examples:" << std::endl;
-    std::cout << "  video_scene_detector --video=raw_video/1_1_9_5.mp4" << std::endl;
-    std::cout << "  video_scene_detector --video=video.mp4 --model_version=vitb16 --threshold=0.9 --verbose" << std::endl;
-    std::cout << "  video_scene_detector --video=video.mp4 --model_version=vith16plus --min_scene_length=60 --sample_interval=2" << std::endl;
-    std::cout << "  video_scene_detector --video=video.mp4 --max_frames=100 --verbose" << std::endl;
-    std::cout << "  video_scene_detector --video=video.mp4 --extract_scenes --verbose" << std::endl;
 }
 
 // Function to validate model version
@@ -649,12 +618,6 @@ int main(int argc, char* argv[]) {
     
     // Parse command-line flags
     absl::ParseCommandLine(argc, argv);
-    
-    // Check for help flag
-    if (absl::GetFlag(FLAGS_help)) {
-        print_usage();
-        return 0;
-    }
     
     // Get flag values
     std::string video_path = absl::GetFlag(FLAGS_video);
