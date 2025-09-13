@@ -31,6 +31,7 @@ ABSL_FLAG(bool, verbose, false, "Enable verbose output");
 ABSL_FLAG(bool, save_features, true, "Save feature vectors to CSV file");
 ABSL_FLAG(bool, extract_scenes, false,
           "Extract each scene as a separate video file");
+ABSL_FLAG(int, batch_size, 8, "Batch size for processing frames (1-32)");
 
 // Structure to store scene information
 struct SceneInfo {
@@ -68,6 +69,48 @@ torch::Tensor preprocess_frame(const cv::Mat &frame,
   tensor = tensor.to(device);
 
   return tensor;
+}
+
+// Function to preprocess multiple frames for batch processing
+torch::Tensor preprocess_frames_batch(const std::vector<cv::Mat> &frames,
+                                      const torch::Device &device) {
+  if (frames.empty()) {
+    throw std::runtime_error("Empty frame batch provided");
+  }
+  
+  int batch_size = frames.size();
+  
+  // Create a tensor to hold the batch [batch_size, 3, 224, 224]
+  auto batch_tensor = torch::zeros({batch_size, 3, 224, 224}, torch::kFloat32);
+  
+  for (int i = 0; i < batch_size; ++i) {
+    // Resize frame to 224x224
+    cv::Mat resized_frame;
+    cv::resize(frames[i], resized_frame, cv::Size(224, 224));
+
+    // Convert BGR to RGB
+    cv::Mat rgb_frame;
+    cv::cvtColor(resized_frame, rgb_frame, cv::COLOR_BGR2RGB);
+
+    // Convert to float and normalize to [0, 1]
+    cv::Mat float_frame;
+    rgb_frame.convertTo(float_frame, CV_32F, 1.0 / 255.0);
+
+    // Convert OpenCV Mat to torch tensor
+    auto tensor =
+        torch::from_blob(float_frame.data, {224, 224, 3}, torch::kFloat32);
+
+    // Permute dimensions from (H, W, C) to (C, H, W)
+    tensor = tensor.permute({2, 0, 1});
+    
+    // Copy to batch tensor
+    batch_tensor[i] = tensor.clone();
+  }
+
+  // Move to device
+  batch_tensor = batch_tensor.to(device);
+  
+  return batch_tensor;
 }
 
 // Function to compute cosine similarity between two feature vectors
@@ -473,7 +516,7 @@ void get_video_properties(cv::VideoCapture &cap, bool verbose) {
 std::pair<std::vector<std::vector<float>>, std::vector<double>>
 process_video_frames(cv::VideoCapture &cap, torch::jit::script::Module &model,
                      const torch::Device &device, int sample_interval,
-                     int max_frames, bool verbose) {
+                     int max_frames, int batch_size, bool verbose) {
 
   std::vector<std::vector<float>> frame_features;
   std::vector<double> frame_timestamps;
@@ -502,12 +545,24 @@ process_video_frames(cv::VideoCapture &cap, torch::jit::script::Module &model,
       std::cout << " (limited to " << max_frames << ")";
     }
     std::cout << ", Sample interval: " << sample_interval << std::endl;
+    std::cout << "Batch size: " << batch_size << std::endl;
     std::cout << "Estimated frames to process: " << estimated_processed_frames
               << std::endl;
   }
 
+  // Validate batch size
+  if (batch_size < 1 || batch_size > 32) {
+    std::cerr << "Warning: batch_size should be between 1 and 32. Using default value of 8." << std::endl;
+    batch_size = 8;
+  }
+
   torch::NoGradGuard no_grad;
   auto start_time = std::chrono::high_resolution_clock::now();
+
+  // Batch processing variables
+  std::vector<cv::Mat> frame_batch;
+  std::vector<double> timestamp_batch;
+  std::vector<int> frame_number_batch;
 
   while (cap.read(frame)) {
     frame_count++;
@@ -524,59 +579,105 @@ process_video_frames(cv::VideoCapture &cap, torch::jit::script::Module &model,
 
     double timestamp = frame_count / fps;
 
-    // Preprocess frame
-    auto input_tensor = preprocess_frame(frame, device);
+    // Add frame to batch
+    frame_batch.push_back(frame.clone());
+    timestamp_batch.push_back(timestamp);
+    frame_number_batch.push_back(frame_count);
 
-    // Run inference
+    // Process batch when it's full or at the end of video
+    if (frame_batch.size() >= batch_size || (max_frames > 0 && frame_count >= max_frames)) {
+      // Preprocess batch
+      auto batch_tensor = preprocess_frames_batch(frame_batch, device);
+
+      // Run batch inference
+      std::vector<torch::jit::IValue> inputs;
+      inputs.push_back(batch_tensor);
+      auto output = model.forward(inputs);
+
+      if (output.isTensor()) {
+        auto output_tensor = output.toTensor();
+        auto cpu_tensor = output_tensor.cpu();
+
+        // Process each result in the batch
+        for (int i = 0; i < frame_batch.size(); ++i) {
+          // Convert to std::vector<float>
+          std::vector<float> features;
+          features.reserve(cpu_tensor.size(1));
+          for (int j = 0; j < cpu_tensor.size(1); ++j) {
+            features.push_back(cpu_tensor[i][j].item<float>());
+          }
+
+          frame_features.push_back(features);
+          frame_timestamps.push_back(timestamp_batch[i]);
+          processed_frames++;
+
+          // Enhanced progress reporting
+          if (verbose) {
+            // Calculate progress percentage
+            double progress_percent =
+                (double)processed_frames / estimated_processed_frames * 100.0;
+
+            // Show detailed progress every batch or every 5 frames
+            if (processed_frames <= 3 || processed_frames % 5 == 0 ||
+                i == frame_batch.size() - 1) {
+              auto current_time = std::chrono::high_resolution_clock::now();
+              auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                  current_time - start_time);
+              double avg_time_per_frame =
+                  elapsed.count() / (double)processed_frames;
+              int eta_ms = (estimated_processed_frames - processed_frames) *
+                           avg_time_per_frame;
+
+              // Create progress bar string
+              std::string progress_bar =
+                  std::string((int)(progress_percent / 5), '=') +
+                  std::string(20 - (int)(progress_percent / 5), ' ');
+
+              printf("\rProgress: [%s] %.1f%% (%d/%d) Frame: %d/%d Time: %.2fs "
+                     "Avg: %.0fms/frame Batch: %zu ETA: %ds    ",
+                     progress_bar.c_str(), progress_percent, processed_frames,
+                     estimated_processed_frames, frame_number_batch[i],
+                     effective_total_frames, timestamp_batch[i], avg_time_per_frame,
+                     frame_batch.size(), eta_ms / 1000);
+              fflush(stdout);
+            }
+          }
+        }
+      }
+
+      // Clear batch for next iteration
+      frame_batch.clear();
+      timestamp_batch.clear();
+      frame_number_batch.clear();
+    }
+  }
+
+  // Process any remaining frames in the batch
+  if (!frame_batch.empty()) {
+    // Preprocess batch
+    auto batch_tensor = preprocess_frames_batch(frame_batch, device);
+
+    // Run batch inference
     std::vector<torch::jit::IValue> inputs;
-    inputs.push_back(input_tensor);
+    inputs.push_back(batch_tensor);
     auto output = model.forward(inputs);
 
     if (output.isTensor()) {
       auto output_tensor = output.toTensor();
       auto cpu_tensor = output_tensor.cpu();
 
-      // Convert to std::vector<float>
-      std::vector<float> features;
-      features.reserve(cpu_tensor.size(1));
-      for (int i = 0; i < cpu_tensor.size(1); ++i) {
-        features.push_back(cpu_tensor[0][i].item<float>());
-      }
-
-      frame_features.push_back(features);
-      frame_timestamps.push_back(timestamp);
-      processed_frames++;
-
-      // Enhanced progress reporting
-      if (verbose) {
-        // Calculate progress percentage
-        double progress_percent =
-            (double)processed_frames / estimated_processed_frames * 100.0;
-
-        // Show detailed progress every frame for testing, then every 5 frames
-        if (processed_frames <= 3 || processed_frames % 5 == 0 ||
-            processed_frames == 1) {
-          auto current_time = std::chrono::high_resolution_clock::now();
-          auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-              current_time - start_time);
-          double avg_time_per_frame =
-              elapsed.count() / (double)processed_frames;
-          int eta_ms = (estimated_processed_frames - processed_frames) *
-                       avg_time_per_frame;
-
-          // Create progress bar string
-          std::string progress_bar =
-              std::string((int)(progress_percent / 5), '=') +
-              std::string(20 - (int)(progress_percent / 5), ' ');
-
-          printf("\rProgress: [%s] %.1f%% (%d/%d) Frame: %d/%d Time: %.2fs "
-                 "Avg: %.0fms/frame ETA: %ds    ",
-                 progress_bar.c_str(), progress_percent, processed_frames,
-                 estimated_processed_frames, frame_count,
-                 effective_total_frames, timestamp, avg_time_per_frame,
-                 eta_ms / 1000);
-          fflush(stdout);
+      // Process each result in the batch
+      for (int i = 0; i < frame_batch.size(); ++i) {
+        // Convert to std::vector<float>
+        std::vector<float> features;
+        features.reserve(cpu_tensor.size(1));
+        for (int j = 0; j < cpu_tensor.size(1); ++j) {
+          features.push_back(cpu_tensor[i][j].item<float>());
         }
+
+        frame_features.push_back(features);
+        frame_timestamps.push_back(timestamp_batch[i]);
+        processed_frames++;
       }
     }
   }
@@ -802,7 +903,7 @@ void extract_cluster_videos(
     const torch::Device& device,
     const std::string &video_path,
     const std::string &output_dir, int sample_interval, int max_frames,
-    bool verbose) {
+    int batch_size, bool verbose) {
 
   if (verbose) {
     std::cout << "\nExtracting cluster videos (one file per camera angle)..."
@@ -913,40 +1014,50 @@ void extract_cluster_videos(
         }
         new_frames.push_back(next_frame);
       }
-      for (int n = 0; n < new_frames.size(); ++n) {
-        // Preprocess frame and extract features
-        cv::Mat next_frame = new_frames[n];
-        auto input_tensor = preprocess_frame(next_frame, device);
+      // Process intermediate frames in batches
+      torch::NoGradGuard no_grad;
+      
+      // Process frames in batches
+      for (size_t start_idx = 0; start_idx < new_frames.size(); start_idx += batch_size) {
+        size_t end_idx = std::min(start_idx + batch_size, new_frames.size());
+        std::vector<cv::Mat> batch_frames(new_frames.begin() + start_idx, new_frames.begin() + end_idx);
+        
+        // Preprocess batch and extract features
+        auto batch_tensor = preprocess_frames_batch(batch_frames, device);
         std::vector<torch::jit::IValue> inputs;
-        inputs.push_back(input_tensor);
+        inputs.push_back(batch_tensor);
         auto output = model.forward(inputs);
 
         if (output.isTensor()) {
           auto output_tensor = output.toTensor();
           auto cpu_tensor = output_tensor.cpu();
 
-          std::vector<float> features;
-          features.reserve(cpu_tensor.size(1));
-          for (int i = 0; i < cpu_tensor.size(1); ++i) {
-            features.push_back(cpu_tensor[0][i].item<float>());
-          }
-          new_features.push_back(features);
-
-          // Assign to nearest cluster
-          double best_similarity = -1.0;
-          int best_cluster = 0;
-          for (size_t c = 0; c < clusters.size(); ++c) {
-            double similarity =
-                cosine_similarity(features, clusters[c].centroid);
-            if (similarity > best_similarity) {
-              best_similarity = similarity;
-              best_cluster = c;
+          // Process each result in the batch
+          for (size_t i = 0; i < batch_frames.size(); ++i) {
+            std::vector<float> features;
+            features.reserve(cpu_tensor.size(1));
+            for (int j = 0; j < cpu_tensor.size(1); ++j) {
+              features.push_back(cpu_tensor[i][j].item<float>());
             }
+            new_features.push_back(features);
+
+            // Assign to nearest cluster
+            double best_similarity = -1.0;
+            int best_cluster = 0;
+            for (size_t c = 0; c < clusters.size(); ++c) {
+              double similarity = cosine_similarity(features, clusters[c].centroid);
+              if (similarity > best_similarity) {
+                best_similarity = similarity;
+                best_cluster = c;
+              }
+            }
+            new_assignments.push_back(best_cluster);
           }
-          new_assignments.push_back(best_cluster);
         } else {
-          // If feature extraction fails, assign to previous cluster
-          new_assignments.push_back(current_cluster_id);
+          // If feature extraction fails, assign to previous cluster for all frames in batch
+          for (size_t i = 0; i < batch_frames.size(); ++i) {
+            new_assignments.push_back(current_cluster_id);
+          }
         }
       }
 
@@ -1061,8 +1172,9 @@ int main(int argc, char *argv[]) {
     get_video_properties(cap, verbose);
 
     // Process video frames and extract features
+    int batch_size = absl::GetFlag(FLAGS_batch_size);
     auto [frame_features, frame_timestamps] = process_video_frames(
-        cap, model, device, sample_interval, max_frames, verbose);
+        cap, model, device, sample_interval, max_frames, batch_size, verbose);
 
     cap.release();
 
@@ -1081,7 +1193,7 @@ int main(int argc, char *argv[]) {
      // Extract cluster videos if requested (one file per camera angle)
      if (extract_scenes) {
        extract_cluster_videos(clusters, frame_features, assignments, model, device,
-                              video_path, output_dir, sample_interval, max_frames, verbose);
+                              video_path, output_dir, sample_interval, max_frames, batch_size, verbose);
      }
 
     std::cout << "\nScene detection completed successfully!" << std::endl;
