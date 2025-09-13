@@ -1,3 +1,5 @@
+#!.dinov3/bin/python3
+
 from transformers import AutoModel
 import torch
 import sys
@@ -52,7 +54,8 @@ else:
 # Load the specified model version from command line arguments.
 print(f"Loading DINOv3 model: {model_version} ({model_name})")
 try:
-    dinov3 = AutoModel.from_pretrained(model_name)
+    # Disable scaled_dot_product_attention to avoid TorchScript issues
+    dinov3 = AutoModel.from_pretrained(model_name, attn_implementation="eager")
     print(f"Successfully loaded DINOv3 {model_version} model.")
 except Exception as e:
     print(f"Error loading model: {e}", file=sys.stderr)
@@ -101,7 +104,7 @@ except Exception as e:
 # 7. Save the Traced Model to a File
 # The resulting ScriptModule is saved to a '.pt' file, which can be
 # loaded directly by LibTorch in C++.
-output_path = f"dinov3_{model_version}_traced.pt"
+output_path = f"models/dinov3_{model_version}_traced.pt"
 traced_model.save(output_path)
 print(f"Traced model saved to: {output_path}")
 

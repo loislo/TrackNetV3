@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <iomanip>
 #include <cstdio>
+#include <unistd.h>
 #include <absl/flags/flag.h>
 #include <absl/flags/parse.h>
 #include <absl/flags/usage.h>
@@ -205,10 +206,17 @@ torch::Device detect_device(bool verbose) {
 torch::jit::script::Module load_model(const std::string& model_version, const torch::Device& device, bool verbose) {
     if (verbose) std::cout << "Loading DINOv3 model (" << model_version << ")..." << std::endl;
     
+    // Print current working directory
+    char cwd[1024];
+    if (getcwd(cwd, sizeof(cwd)) != nullptr) {
+        if (verbose) std::cout << "Current working directory: " << cwd << std::endl;
+    }
+    
     // Try multiple possible model paths for the specified model version
     std::string model_filename = "dinov3_" + model_version + "_traced.pt";
     std::vector<std::string> possible_paths = {
-        "dinov3/" + model_filename,    // From parent directory (most common)
+        "models/" + model_filename,    // From models subdirectory (preferred)
+        "dinov3/" + model_filename,    // From parent directory
         model_filename,                // From dinov3 directory
         "../dinov3/" + model_filename  // From other subdirectory
     };
@@ -219,12 +227,27 @@ torch::jit::script::Module load_model(const std::string& model_version, const to
     for (const auto& model_path : possible_paths) {
         if (verbose) std::cout << "Trying model path: " << model_path << std::endl;
         
+        // Check if file exists
+        std::ifstream file_check(model_path);
+        if (!file_check.good()) {
+            if (verbose) std::cout << "File does not exist: " << model_path << std::endl;
+            file_check.close();
+            continue;
+        }
+        file_check.close();
+        
+        // Get absolute path
+        char abs_path[1024];
+        if (realpath(model_path.c_str(), abs_path) != nullptr) {
+            if (verbose) std::cout << "Absolute path: " << abs_path << std::endl;
+        }
+        
         try {
             model = torch::jit::load(model_path);
             successful_path = model_path;
             break;
         } catch (const c10::Error& e) {
-            if (verbose) std::cout << "Failed to load from: " << model_path << std::endl;
+            if (verbose) std::cout << "Failed to load from: " << model_path << " - Error: " << e.what() << std::endl;
             continue;
         }
     }
