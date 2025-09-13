@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <cstdio>
 #include <unistd.h>
+#include <random>
 #include <absl/flags/flag.h>
 #include <absl/flags/parse.h>
 #include <absl/flags/usage.h>
@@ -89,33 +90,167 @@ double cosine_similarity(const std::vector<float>& vec1, const std::vector<float
     return dot_product / (norm1 * norm2);
 }
 
-// Function to classify scene type based on feature vector
+// Structure to store cluster information
+struct ClusterInfo {
+    int cluster_id;
+    std::vector<int> frame_indices;
+    std::vector<float> centroid;
+    std::string scene_type;
+    double avg_similarity;
+};
+
+// Function to perform K-means clustering on feature vectors
+std::vector<ClusterInfo> cluster_features(const std::vector<std::vector<float>>& frame_features, 
+                                         int k = 5, int max_iterations = 100, bool verbose = false) {
+    if (frame_features.empty()) return {};
+    
+    int n_features = frame_features[0].size();
+    int n_frames = frame_features.size();
+    
+    if (verbose) {
+        std::cout << "Clustering " << n_frames << " frames into " << k << " clusters..." << std::endl;
+    }
+    
+    // Initialize centroids randomly
+    std::vector<std::vector<float>> centroids(k, std::vector<float>(n_features, 0.0));
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dis(0, n_frames - 1);
+    
+    for (int i = 0; i < k; ++i) {
+        int random_idx = dis(gen);
+        centroids[i] = frame_features[random_idx];
+    }
+    
+    std::vector<int> assignments(n_frames, 0);
+    
+    // K-means iterations
+    for (int iter = 0; iter < max_iterations; ++iter) {
+        bool changed = false;
+        
+        // Assign each frame to nearest centroid
+        for (int i = 0; i < n_frames; ++i) {
+            double best_similarity = -1.0;
+            int best_cluster = 0;
+            
+            for (int c = 0; c < k; ++c) {
+                double similarity = cosine_similarity(frame_features[i], centroids[c]);
+                if (similarity > best_similarity) {
+                    best_similarity = similarity;
+                    best_cluster = c;
+                }
+            }
+            
+            if (assignments[i] != best_cluster) {
+                assignments[i] = best_cluster;
+                changed = true;
+            }
+        }
+        
+        if (!changed) break;
+        
+        // Update centroids
+        for (int c = 0; c < k; ++c) {
+            std::fill(centroids[c].begin(), centroids[c].end(), 0.0);
+            int count = 0;
+            
+            for (int i = 0; i < n_frames; ++i) {
+                if (assignments[i] == c) {
+                    for (int f = 0; f < n_features; ++f) {
+                        centroids[c][f] += frame_features[i][f];
+                    }
+                    count++;
+                }
+            }
+            
+            if (count > 0) {
+                for (int f = 0; f < n_features; ++f) {
+                    centroids[c][f] /= count;
+                }
+            }
+        }
+    }
+    
+    // Create cluster info structures
+    std::vector<ClusterInfo> clusters(k);
+    for (int c = 0; c < k; ++c) {
+        clusters[c].cluster_id = c;
+        clusters[c].centroid = centroids[c];
+        
+        // Collect frame indices for this cluster
+        for (int i = 0; i < n_frames; ++i) {
+            if (assignments[i] == c) {
+                clusters[c].frame_indices.push_back(i);
+            }
+        }
+        
+        // Calculate average similarity within cluster
+        double total_similarity = 0.0;
+        int similarity_count = 0;
+        for (int idx : clusters[c].frame_indices) {
+            double sim = cosine_similarity(frame_features[idx], centroids[c]);
+            total_similarity += sim;
+            similarity_count++;
+        }
+        clusters[c].avg_similarity = similarity_count > 0 ? total_similarity / similarity_count : 0.0;
+    }
+    
+    // Sort clusters by size (largest first)
+    std::sort(clusters.begin(), clusters.end(), 
+              [](const ClusterInfo& a, const ClusterInfo& b) {
+                  return a.frame_indices.size() > b.frame_indices.size();
+              });
+    
+    // Assign scene types based on cluster size and characteristics
+    for (size_t i = 0; i < clusters.size(); ++i) {
+        if (i == 0) {
+            clusters[i].scene_type = "main_court_view";  // Largest cluster = main court view
+        } else if (i == 1) {
+            clusters[i].scene_type = "secondary_angle";  // Second largest = secondary angle
+        } else if (clusters[i].frame_indices.size() < n_frames * 0.05) {  // Less than 5% of frames
+            clusters[i].scene_type = "transition_scene"; // Small clusters = transitions/special shots
+        } else {
+            clusters[i].scene_type = "alternate_angle_" + std::to_string(i);
+        }
+    }
+    
+    if (verbose) {
+        std::cout << "Clustering results:" << std::endl;
+        for (size_t i = 0; i < clusters.size(); ++i) {
+            double percentage = (double)clusters[i].frame_indices.size() / n_frames * 100.0;
+            std::cout << "  Cluster " << i << " (" << clusters[i].scene_type << "): " 
+                      << clusters[i].frame_indices.size() << " frames (" 
+                      << std::fixed << std::setprecision(1) << percentage << "%), "
+                      << "avg similarity: " << std::setprecision(3) << clusters[i].avg_similarity << std::endl;
+        }
+    }
+    
+    return clusters;
+}
+
+// Function to classify scene type based on feature vector using clustering
+std::string classify_scene_type_with_clusters(const std::vector<float>& features, 
+                                            const std::vector<ClusterInfo>& clusters) {
+    if (clusters.empty()) return "unknown";
+    
+    double best_similarity = -1.0;
+    std::string best_type = "unknown";
+    
+    for (const auto& cluster : clusters) {
+        double similarity = cosine_similarity(features, cluster.centroid);
+        if (similarity > best_similarity) {
+            best_similarity = similarity;
+            best_type = cluster.scene_type;
+        }
+    }
+    
+    return best_type;
+}
+
+// Legacy function for backward compatibility
 std::string classify_scene_type(const std::vector<float>& features) {
-    // This is a simple heuristic - you can make this more sophisticated
-    // by training a classifier on labeled data
-    
-    // Calculate some basic statistics
-    double mean = 0.0;
-    double variance = 0.0;
-    
-    for (float f : features) {
-        mean += f;
-    }
-    mean /= features.size();
-    
-    for (float f : features) {
-        variance += (f - mean) * (f - mean);
-    }
-    variance /= features.size();
-    
-    // Simple classification based on feature statistics
-    if (variance > 0.1) {
-        return "complex_scene";  // High variance = complex scene
-    } else if (mean > 0.05) {
-        return "bright_scene";   // High mean = bright scene
-    } else {
-        return "simple_scene";   // Low variance and mean = simple scene
-    }
+    // This is now a fallback - the main classification should use clustering
+    return "unclassified";
 }
 
 // Function to validate model version
@@ -399,33 +534,44 @@ std::pair<std::vector<std::vector<float>>, std::vector<double>> process_video_fr
     return {frame_features, frame_timestamps};
 }
 
-// Function to detect scenes from feature vectors
+// Function to detect scenes from feature vectors using clustering
 std::vector<SceneInfo> detect_scenes(const std::vector<std::vector<float>>& frame_features,
                                     const std::vector<double>& frame_timestamps,
                                     double similarity_threshold, int min_scene_length,
                                     int sample_interval, bool verbose) {
     
-    if (verbose) std::cout << "\nDetecting scenes..." << std::endl;
+    if (verbose) std::cout << "\nDetecting scenes using clustering approach..." << std::endl;
     
     if (frame_features.empty()) {
         std::cerr << "Error: No frames were processed!" << std::endl;
         return {};
     }
     
+    // Step 1: Perform clustering on all features to identify camera angles
+    std::vector<ClusterInfo> clusters = cluster_features(frame_features, 5, 100, verbose);
+    
+    if (verbose) {
+        std::cout << "\nNow detecting temporal scenes based on cluster transitions..." << std::endl;
+    }
+    
     std::vector<SceneInfo> scenes;
     
+    // Step 2: Use clustering information for better scene detection
     // Start with the first frame as a new scene
     SceneInfo current_scene;
     current_scene.start_frame = 0 * sample_interval;  // Convert to actual frame number
     current_scene.start_time = frame_timestamps[0];
     current_scene.representative_features = frame_features[0];
-    current_scene.scene_type = classify_scene_type(frame_features[0]);
+    current_scene.scene_type = classify_scene_type_with_clusters(frame_features[0], clusters);
     
     for (size_t i = 1; i < frame_features.size(); ++i) {
-        double similarity = cosine_similarity(current_scene.representative_features, frame_features[i]);
+        // Get scene type for current frame
+        std::string current_type = classify_scene_type_with_clusters(frame_features[i], clusters);
         
-        // Check if this is a scene change
-        if (similarity < similarity_threshold) {
+        // Scene change occurs ONLY when camera angle (cluster) changes
+        bool scene_type_changed = (current_type != current_scene.scene_type);
+        
+        if (scene_type_changed) {
             // End current scene
             current_scene.end_frame = (i - 1) * sample_interval;  // Convert to actual frame number
             current_scene.end_time = frame_timestamps[i - 1];
@@ -433,13 +579,17 @@ std::vector<SceneInfo> detect_scenes(const std::vector<std::vector<float>>& fram
             // Only add scene if it's long enough
             if ((current_scene.end_frame - current_scene.start_frame + 1) >= min_scene_length) {
                 scenes.push_back(current_scene);
+                if (verbose && scene_type_changed) {
+                    std::cout << "  Scene change detected: " << current_scene.scene_type 
+                              << " -> " << current_type << " at frame " << i * sample_interval << std::endl;
+                }
             }
             
             // Start new scene
             current_scene.start_frame = i * sample_interval;  // Convert to actual frame number
             current_scene.start_time = frame_timestamps[i];
             current_scene.representative_features = frame_features[i];
-            current_scene.scene_type = classify_scene_type(frame_features[i]);
+            current_scene.scene_type = current_type;
         }
     }
     
@@ -594,8 +744,8 @@ void extract_scene_videos(const std::vector<SceneInfo>& scenes, const std::strin
                    scene.start_time, scene.end_time, scene_filename.c_str());
         }
         
-        // Create video writer
-        cv::VideoWriter writer(scene_filename, cv::VideoWriter::fourcc('m', 'p', '4', 'v'), 
+        // Create video writer with avc1 codec (H.264 compatible)
+        cv::VideoWriter writer(scene_filename, cv::VideoWriter::fourcc('a', 'v', 'c', '1'), 
                               fps, cv::Size(width, height));
         
         if (!writer.isOpened()) {
@@ -632,6 +782,140 @@ void extract_scene_videos(const std::vector<SceneInfo>& scenes, const std::strin
     
     if (verbose) {
         std::cout << "Scene extraction completed! Extracted " << scenes.size() << " scene videos." << std::endl;
+    }
+}
+
+// Function to extract cluster videos (one file per cluster)
+void extract_cluster_videos(const std::vector<ClusterInfo>& clusters, 
+                           const std::vector<std::vector<float>>& frame_features,
+                           const std::string& video_path, const std::string& output_dir, 
+                           int sample_interval, int max_frames, bool verbose) {
+    
+    if (verbose) {
+        std::cout << "\nExtracting cluster videos (one file per camera angle)..." << std::endl;
+        std::cout << "Input video: " << video_path << std::endl;
+        std::cout << "Output directory: " << output_dir << std::endl;
+    }
+    
+    // Open the input video
+    cv::VideoCapture cap(video_path);
+    if (!cap.isOpened()) {
+        std::cerr << "Error: Could not open video file for cluster extraction: " << video_path << std::endl;
+        return;
+    }
+    
+    // Get video properties
+    double fps = cap.get(cv::CAP_PROP_FPS);
+    int width = cap.get(cv::CAP_PROP_FRAME_WIDTH);
+    int height = cap.get(cv::CAP_PROP_FRAME_HEIGHT);
+    int total_frames = cap.get(cv::CAP_PROP_FRAME_COUNT);
+    
+    // Apply max_frames limit if specified
+    int effective_total_frames = total_frames;
+    if (max_frames > 0 && max_frames < total_frames) {
+        effective_total_frames = max_frames;
+    }
+    
+    if (verbose) {
+        std::cout << "Video properties - FPS: " << std::fixed << std::setprecision(2) << fps 
+                  << ", Resolution: " << width << "x" << height << std::endl;
+        std::cout << "Processing frames: 0 to " << effective_total_frames << std::endl;
+    }
+    
+    // Create video writers for each cluster
+    std::vector<cv::VideoWriter> writers(clusters.size());
+    std::vector<int> frames_written(clusters.size(), 0);
+    
+    for (size_t i = 0; i < clusters.size(); ++i) {
+        std::string cluster_filename = output_dir + "/cluster_" + std::to_string(i) + 
+                                     "_" + clusters[i].scene_type + ".mp4";
+        
+        writers[i].open(cluster_filename, cv::VideoWriter::fourcc('a', 'v', 'c', '1'), 
+                       fps, cv::Size(width, height));
+        
+        if (!writers[i].isOpened()) {
+            std::cerr << "Error: Could not create output video: " << cluster_filename << std::endl;
+            return;
+        }
+        
+        if (verbose) {
+            std::cout << "Created writer for cluster " << i << " (" << clusters[i].scene_type 
+                      << "): " << cluster_filename << std::endl;
+        }
+    }
+    
+    // Process each frame and assign to appropriate cluster
+    cv::Mat frame;
+    int frame_count = 0;
+    int feature_index = 0;
+    int last_cluster_id = 0;  // Default to first cluster
+    
+    // For progress reporting every 10 seconds
+    auto start_time = std::chrono::high_resolution_clock::now();
+    auto last_progress_time = start_time;
+    
+    while (cap.read(frame) && frame_count < effective_total_frames) {
+        int current_cluster_id;
+        
+        // Check if we have a feature for this frame (sampled frames)
+        if (frame_count % sample_interval == 0 && feature_index < frame_features.size()) {
+            // Find which cluster this frame belongs to
+            double best_similarity = -1.0;
+            current_cluster_id = 0;
+            
+            for (size_t c = 0; c < clusters.size(); ++c) {
+                double similarity = cosine_similarity(frame_features[feature_index], clusters[c].centroid);
+                if (similarity > best_similarity) {
+                    best_similarity = similarity;
+                    current_cluster_id = c;
+                }
+            }
+            
+            last_cluster_id = current_cluster_id;
+            feature_index++;
+        } else {
+            // Use the last known cluster ID for skipped frames
+            current_cluster_id = last_cluster_id;
+        }
+        
+        // Write frame to the appropriate cluster video
+        writers[current_cluster_id].write(frame);
+        frames_written[current_cluster_id]++;
+        
+        frame_count++;
+        
+        // Progress reporting every 10 seconds
+        if (verbose) {
+            auto current_time = std::chrono::high_resolution_clock::now();
+            auto elapsed_since_last = std::chrono::duration_cast<std::chrono::seconds>(current_time - last_progress_time);
+            
+            if (elapsed_since_last.count() >= 2 || frame_count == effective_total_frames) {
+                auto total_elapsed = std::chrono::duration_cast<std::chrono::seconds>(current_time - start_time);
+                double progress_percent = (double)frame_count / effective_total_frames * 100.0;
+                double avg_fps = frame_count / (total_elapsed.count() + 1);  // +1 to avoid division by zero
+                
+                printf("\rProcessed frame %d/%d (%.1f%%) - %.1f fps - %d seconds elapsed", 
+                       frame_count, effective_total_frames, progress_percent, avg_fps, (int)total_elapsed.count());
+                fflush(stdout);
+                
+                last_progress_time = current_time;
+            }
+        }
+    }
+    
+    // Close all writers
+    for (size_t i = 0; i < writers.size(); ++i) {
+        writers[i].release();
+    }
+    
+    cap.release();
+    
+    if (verbose) {
+        printf("\nCluster extraction completed!\n");
+        for (size_t i = 0; i < clusters.size(); ++i) {
+            std::cout << "Cluster " << i << " (" << clusters[i].scene_type << "): " 
+                      << frames_written[i] << " frames written" << std::endl;
+        }
     }
 }
 
@@ -688,32 +972,18 @@ int main(int argc, char* argv[]) {
         
         cap.release();
         
-        // Detect scenes
-        std::vector<SceneInfo> scenes = detect_scenes(frame_features, frame_timestamps,
-                                                     similarity_threshold, min_scene_length,
-                                                     sample_interval, verbose);
-        
-        // Print results
-        print_scene_results(scenes, sample_interval);
-        
-        // Save detailed results
-        double fps = cap.get(cv::CAP_PROP_FPS);
-        int total_frames = cap.get(cv::CAP_PROP_FRAME_COUNT);
-        int width = cap.get(cv::CAP_PROP_FRAME_WIDTH);
-        int height = cap.get(cv::CAP_PROP_FRAME_HEIGHT);
-        
-        save_detailed_results(scenes, video_path, total_frames, fps, width, height,
-                             frame_features.size(), sample_interval, similarity_threshold,
-                             min_scene_length, output_dir);
+        // Perform clustering on all features to identify camera angles
+        std::vector<ClusterInfo> clusters = cluster_features(frame_features, 5, 100, verbose);
         
         // Save feature vectors if requested
         if (save_features) {
             save_feature_vectors(frame_features, frame_timestamps, sample_interval, output_dir);
         }
         
-        // Extract scene videos if requested
+        // Extract cluster videos if requested (one file per camera angle)
         if (extract_scenes) {
-            extract_scene_videos(scenes, video_path, output_dir, verbose);
+            extract_cluster_videos(clusters, frame_features, video_path, output_dir, 
+                                 sample_interval, max_frames, verbose);
         }
         
         std::cout << "\nScene detection completed successfully!" << std::endl;
